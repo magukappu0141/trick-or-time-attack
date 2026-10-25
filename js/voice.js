@@ -32,9 +32,17 @@ const Voice = {
   stream: null,
   analyser: null,
   onResult: null,
+  onShout: null,      // 叫び判定（声の大きさと長さだけ）で合格した時に呼ぶ
   threshold: CONFIG.VOICE_LOUD_THRESHOLD,
+  srFails: 0,         // 音声認識が続けて失敗した回数（Brave などはずっと network エラーになる）
+  lastResultAt: 0,    // 音声認識が最後に何か返した時刻
+  seg: null,          // 今しゃべっている声のかたまり
+  shoutCheck: null,   // 叫び終わった声：音声認識が何か返すか少し待ってから判定する
 
   get supported() { return !!this.SR; },
+
+  // 音声認識が使えないブラウザ・環境（このときは叫び判定だけで判定する）
+  get srDead() { return !this.SR || this.srFails >= 3 || ['service-not-allowed', 'language-not-supported'].includes(this.lastError); },
 
   loadThreshold() {
     try {
@@ -53,8 +61,12 @@ const Voice = {
   get recentPeak() { return this.levels.length ? Math.max(...this.levels) : 0; },
 
   // onResult(alts, isFinal) … 途中結果でも呼ぶ（合っていれば即クリアにできる）
-  async start(onResult) {
+  async start(onResult, onShout = null) {
     this.onResult = onResult;
+    this.onShout = onShout;
+    this.srFails = 0;
+    this.seg = null;
+    this.shoutCheck = null;
     this.active = true;
     this.interim = '';
     this.lastFinal = '';
@@ -92,6 +104,8 @@ const Voice = {
     r.onresult = (e) => {
       if (this.rec !== r) return;
       this.lastError = null;
+      this.srFails = 0;
+      this.lastResultAt = performance.now();
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const res = e.results[i];
         // 候補を全部見る（第1候補が外れでも第3候補が合ってることがある）
@@ -105,12 +119,15 @@ const Voice = {
       if (this.rec !== r) return;
       this.logEvent(`エラー ${e.error}`);
       if (e.error !== 'no-speech' && e.error !== 'aborted') this.lastError = e.error;
+      if (e.error === 'network' || e.error === 'language-not-supported') this.srFails++;
     };
     r.onend = () => {
       if (this.rec !== r) return;
       this.listening = false; this.pending = false;
       this.lastEnd = performance.now();
-      this.logEvent('終了 → 再開待ち');
+      this.logEvent('終了 → 再開');
+      // すぐ聞き直す（止まっている間に叫ばれると聞き逃すので、見張りを待たない）
+      setTimeout(() => this.watchdog(), 60);
     };
     this.rec = r;
     this.pending = true;
@@ -127,11 +144,11 @@ const Voice = {
 
   // 見張り：止まっていたら再開する（onend が来ない・start が黙って失敗する場合にも効く）
   watchdog() {
-    if (!this.active || !this.ready || !this.SR || ['not-allowed', 'service-not-allowed'].includes(this.lastError)) return;
+    if (!this.active || !this.ready || this.srDead || this.lastError === 'not-allowed') return;
     const now = performance.now();
     if (this.listening) return;
     if (this.pending && now - this.pendingSince < 3000) return;
-    if (now - (this.lastEnd || 0) < 250) return;
+    if (now - (this.lastEnd || 0) < 50) return;
     this.startSession();
   },
 
@@ -187,11 +204,59 @@ const Voice = {
     // 雑音レベル：静かなときに素早く下がり、うるさいときはゆっくり上がる
     if (rms < this.noiseFloor) this.noiseFloor = this.noiseFloor * 0.9 + rms * 0.1;
     else this.noiseFloor += (rms - this.noiseFloor) * 0.002;
+    this.detectShout(rms);
+  },
+
+  // ===== 叫び判定（声の大きさと長さだけ） =====
+  // 音声認識が何も返さなかった叫びは、これで判定する。
+  // ・Brave など音声認識が使えないブラウザ ・Edge など黙って何も返さないブラウザ
+  // ・Chrome で認識が止まって再開するまでの隙間に叫んだとき
+  detectShout(rms) {
+    if (!this.onShout || !this.active) return;
+    const now = performance.now();
+    const voiced = rms >= Math.max(this.noiseFloor * 3, this.loudLine * 0.35);
+    if (voiced) {
+      if (!this.seg) this.seg = { start: now, env: [], quiet: 0 };
+      this.seg.quiet = 0;
+    }
+    if (this.seg) {
+      this.seg.env.push(rms);
+      if (!voiced && ++this.seg.quiet > 15) { // 0.25秒黙ったら、ひとかたまり終わり
+        const seg = this.seg; this.seg = null;
+        seg.env.length -= seg.quiet;
+        if (this.looksLikeShout(seg.env)) this.shoutCheck = { start: seg.start, end: now };
+      }
+    }
+    const sc = this.shoutCheck;
+    if (sc && (this.srDead || now - sc.end > CONFIG.SHOUT_WAIT_MS)) {
+      this.shoutCheck = null;
+      // 叫んでいる間〜少しあとに音声認識が何か返していたら、そっちの判定にまかせる
+      if (!this.srDead && this.lastResultAt > sc.start - 300) return;
+      this.logEvent('叫び判定で合格');
+      if (this.SR && !this.srDead) this.startSession(); // 聞き逃した認識は、たぶん止まっているので始め直す
+      this.onShout();
+    }
+  },
+
+  // 長さ・大きさ・途切れ（「ト・リッ・ク・オア・ト・リー・ト」の音の切れ目）で判定する
+  looksLikeShout(env) {
+    const sec = env.length / CONFIG.FPS;
+    const peak = Math.max(...env);
+    if (sec < CONFIG.SHOUT_MIN_SEC || sec > CONFIG.SHOUT_MAX_SEC || peak < this.loudLine) return false;
+    let dips = 0, high = false;
+    for (let i = 1; i < env.length - 1; i++) {
+      const v = (env[i - 1] + env[i] + env[i + 1]) / 3;
+      if (v >= peak * 0.55) high = true;
+      else if (high && v <= peak * 0.3) { dips++; high = false; }
+    }
+    return dips >= CONFIG.SHOUT_MIN_DIPS;
   },
 
   // 状態を人間向けの文章に
   statusText() {
-    if (!this.SR) return '× このブラウザは音声認識に非対応（Chrome / Edge / Safari を使う）';
+    if (!this.hasMic && this.micError) return '× マイクが使えません（' + this.micError + '）';
+    if (!this.SR) return '△ このブラウザは音声認識に非対応 → 声の大きさと長さで判定します';
+    if (this.srDead) return '△ 音声認識が使えません（' + (VOICE_ERRORS[this.lastError] || this.lastError || '応答なし') + '）→ 声の大きさと長さで判定します';
     if (location.protocol === 'file:') return '△ file:// で開いています。http://localhost で開くと安定します';
     if (this.lastError) return '× ' + (VOICE_ERRORS[this.lastError] || this.lastError);
     if (this.micError) return '△ 声量メーターが使えません（' + this.micError + '）。声量判定なしで続行';

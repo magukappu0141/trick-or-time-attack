@@ -410,11 +410,7 @@ const Horror = {
     if (ic.t === 40) ic.reply = HORROR_TEXT.ic1;
     if (ic.t === 120) { ic.reply = HORROR_TEXT.ic2; Sound.play('se_whisper'); }
     if (ic.t === 200) ic.reply = HORROR_TEXT.ic3;
-    if (ic.t === 210 && !ic.listening) {
-      ic.listening = true;
-      if (Voice.supported) Voice.start(onVoiceResult);
-      else showTyping();
-    }
+    if (ic.t === 210 && !ic.listening) startListening(ic);
   },
 
   startEnding() {

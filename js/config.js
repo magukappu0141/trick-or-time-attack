@@ -52,10 +52,10 @@ const CONFIG = {
   POLICE_HEIGHT_EXEMPT: 110, // これより高いとおまわりさんの視界に入らない
 
   // おばあちゃんの話す速さ：1フレームに進む文字数。1行ごとに GRANDMA_SPEED_UP ずつ速くなる（だんだん早口）
-  GRANDMA_SPEED_START: 0.11,
-  GRANDMA_SPEED_UP: 0.17,
+  GRANDMA_SPEED_START: 0.075,  // 1回の話が1分〜1分15秒くらいになる速さ
+  GRANDMA_SPEED_UP: 0.035,
   GRANDMA_LINE_WAIT: 60,       // 1行言い終わってから次の行までの待ち（行ごとに4ずつ短くなる）
-  GRANDMA_LINE_WAIT_MIN: 8,
+  GRANDMA_LINE_WAIT_MIN: 10,
 
   // スキップボタンAI
   SKIP_SHOW_PREDICTION: false, // true にするとカーソル予測の線を表示
@@ -76,6 +76,11 @@ const CONFIG = {
   SANDSTORM_MS: 1000,          // ジャンプスケアのあとの砂嵐の長さ（エンディング）
   SANDSTORM_CAUGHT_MS: 450,    // 「なにか」に捕まった時の砂嵐の長さ
   VOICE_LOUD_THRESHOLD: 0.05, // 叫び判定の声量の初期値（タイトルで V → マイクテストで↑↓調整・保存できる）
+  // 叫び判定（音声認識が何も返さなかった時・使えないブラウザで、声の大きさと長さだけで判定する）
+  SHOUT_MIN_SEC: 0.6,          // これより短い声は叫びとみなさない
+  SHOUT_MAX_SEC: 4,            // これより長い声も叫びとみなさない
+  SHOUT_MIN_DIPS: 1,           // 声の途切れ（「トリッ・ク」の切れ目）がいくつ以上あるか（「わーー」だけの叫びを弾く）
+  SHOUT_WAIT_MS: 1500,         // 叫び終わってから、音声認識の結果をどれだけ待つか
   TYPING_EXCLAMATIONS: 5,     // タイピングモードで必要な「！」の数
 };
 

@@ -226,6 +226,9 @@ function startMicTest() {
     micTest.result = hit ? `△ 言葉はOK、声量が足りない（↓キーで基準を下げられる）` : `× 「${alts.join(' / ')}」に聞こえた`;
     Voice.levels = [];
     Sound.play('se_wrong');
+  }, () => {
+    if (scene !== 'mictest') return;
+    micTest.result = '◯ 合格！（音声認識の結果なし → 声の大きさと長さで判定）'; micTest.ok = true; micTest.t = 120; Sound.play('se_clear');
   });
 }
 
@@ -1008,19 +1011,31 @@ function updateIntercom() {
     Horror.intercom(ic);
   } else {
     if (ic.t === 70) ic.reply = TEXT.intercom.greet;
-    if (ic.t === 90 && !ic.listening) {
-      ic.listening = true;
-      if (Voice.supported) Voice.start(onVoiceResult);
-      else showTyping();
-    }
+    if (ic.t === 90 && !ic.listening) startListening(ic);
   }
   if (ic.listening && pressed.KeyT && typingInput.hidden) showTyping();
-  // マイクや音声認識が使えない環境では自動でタイピングモードへ
+  // マイクが使えない環境では自動でタイピングモードへ（音声認識だけ使えない時は叫び判定で続ける）
   if (ic.listening && !ic.autoTyping && typingInput.hidden && ic.t > 150 &&
-      ['not-allowed', 'service-not-allowed', 'audio-capture', 'network', 'language-not-supported'].includes(Voice.lastError)) {
+      (Voice.lastError === 'not-allowed' || Voice.lastError === 'audio-capture' || (Voice.micError && !Voice.hasMic))) {
     ic.autoTyping = true;
     showTyping();
   }
+}
+
+// 聞き取りを始める：音声認識＋叫び判定。マイクが無ければタイピングモード
+function startListening(ic) {
+  ic.listening = true;
+  Voice.start(onVoiceResult, onShoutResult).then(() => {
+    if (!Voice.hasMic && scene === 'play' && G.state === 'intercom' && typingInput.hidden) { ic.autoTyping = true; showTyping(); }
+  });
+}
+
+// 音声認識が何も返さなかったけど、大きな声で「トリックオアトリート」くらいの長さを叫んだ
+function onShoutResult() {
+  if (scene !== 'play' || G.state !== 'intercom') return;
+  G.stats.shouts++;
+  G.ic.lastHeard = '（叫び判定）';
+  success();
 }
 
 // alts: 認識候補（最大5つ）。途中結果でも合言葉＆声量OKなら即クリア
@@ -1837,7 +1852,7 @@ function renderIntercom() {
     text(late ? tx(HORROR_TEXT.typingHelp, { n: CONFIG.TYPING_EXCLAMATIONS }) : `声の代わりに「！」を${CONFIG.TYPING_EXCLAMATIONS}個以上つけて Enter`, W / 2, 420, 17, '#ddd', 'center');
     return;
   }
-  if (Voice.supported) {
+  if (Voice.hasMic || Voice.supported) {
     outlined(late ? HORROR_TEXT.shout : TEXT.intercom.shout, W / 2, 380, 22, late ? '#c00' : '#ff9a3c');
     drawVoiceMeter(340, 410, 600);
     text(Voice.statusText(), 264, 452, 13, Voice.lastError ? '#f88' : '#9c9');
