@@ -1943,6 +1943,7 @@ function renderTitle() {
   text('A/D 交互に歩く　←→ 踏ん張る　Space ジャンプ/起き上がる　E インターホン　R リセット　M ミュート　V マイクテスト', W / 2, 672, 15, '#bbb', 'center');
   text('※ゴールではマイクで本当に「トリックオアトリート」と叫びます', W / 2, 698, 14, '#ff9a3c', 'center');
   text('X: 記録リセット', W - 16, 712, 12, '#777', 'right');
+  text(TEXT.credit, 16, 712, 12, '#999');
   if (resetAsk) {
     ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, 0, W, H);
     panel(W / 2 - 300, 240, 600, 220, 0.95);

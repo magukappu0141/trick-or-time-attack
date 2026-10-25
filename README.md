@@ -43,3 +43,7 @@ js/assets.js         画像ローダーと仮素材の描画
 ```
 
 記録は localStorage に保存されます。消したいときはブラウザの開発者ツールで `localStorage.clear()`。
+
+## クレジット
+
+- BGM：魔王魂（https://maou.audio/）
