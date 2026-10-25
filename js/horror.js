@@ -116,8 +116,8 @@ const Horror = {
       if (--st.hb <= 0) { Sound.play('se_heartbeat'); st.hb = Math.max(26, 80 - (h - 0.6) * 140); }
     }
 
-    // うしろの「なにか」：止まると近づいてくる
-    if (h > 0.5 && h < 0.97 && G.state === 'run') {
+    // うしろの「なにか」：止まると近づいてくる（捕まえたら消える。ジャンプスケアは1回だけ）
+    if (h > 0.5 && h < 0.97 && G.state === 'run' && !st.caughtOnce) {
       if (!st.follower) st.follower = { gap: 650 };
       const f = st.follower;
       const moving = Math.abs(G.p.vx) > 2 && !G.p.fallen;
@@ -129,7 +129,8 @@ const Horror = {
   caught() {
     const st = this.st, p = G.p;
     this.jumpscare(CONFIG.SANDSTORM_CAUGHT_MS);
-    st.follower.gap = 650;
+    st.caughtOnce = true;
+    st.follower = null;
     p.vx = 0; p.omega = 0; // びっくりさせるだけ（転ばせると抜け出せなくなるので）
     this.say(HORROR_TEXT.caught, { color: '#ff0000', size: 52, dur: 120 });
   },
