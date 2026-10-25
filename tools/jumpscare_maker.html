@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>ジャンプスケア GIF メーカー</title>
+<style>
+  body { margin: 0; background: #000; color: #aaa; font-family: sans-serif; }
+  canvas { display: block; width: 100%; max-width: 960px; margin: 0 auto; }
+  p { text-align: center; font-size: 13px; }
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="540"></canvas>
+<p>ハード用ジャンプスケア（仮）：壊れた黒猫のアニマトロニクス。クリックでもう一度再生</p>
+<script>
+// =====================================================================
+//  ジャンプスケアの連番画像を描く（tools/make_jumpscare.sh で GIF にする）
+//  ?export=http://127.0.0.1:8799/ を付けて開くと、全フレームをPNGで送信する
+// =====================================================================
+const c = document.getElementById('c');
+const g = c.getContext('2d');
+const W = c.width, H = c.height;
+const FRAMES = 30;          // 40ms × 30 = 1.2秒
+const prev = document.createElement('canvas'); prev.width = W; prev.height = H;
+
+function rnd(seed) { const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
+const ease = (t) => t * t * (3 - 2 * t);
+
+function params(f) {
+  if (f < 5) return { s: 0.42, jaw: 0, hands: 0.15, eye: f / 4, sx: 0, sy: 0, rot: 0, lit: 0.55 + f * 0.05 };
+  if (f < 11) {
+    const t = ease((f - 5) / 5);
+    return { s: 0.42 + t * 1.58, jaw: t, hands: 0.15 + t * 0.85, eye: 1, sx: (rnd(f) - 0.5) * 10 * t, sy: (rnd(f + 9) - 0.5) * 10 * t, rot: (rnd(f + 3) - 0.5) * 0.06, lit: 0.8 + t * 0.3 };
+  }
+  return {
+    s: 2.0 + Math.sin(f * 2.3) * 0.05, jaw: 0.72 + Math.abs(Math.sin(f * 1.9)) * 0.28, hands: 1 + Math.sin(f * 1.3) * 0.05, eye: 1,
+    sx: (rnd(f) - 0.5) * 34, sy: (rnd(f + 9) - 0.5) * 26, rot: (rnd(f + 3) - 0.5) * 0.09, lit: 0.85 + rnd(f + 5) * 0.35,
+  };
+}
+
+// 楕円の中だけ、ふちに向かって暗くする（立体感）
+function shade(cx, cy, rx, ry, lx, ly, a) {
+  g.save();
+  g.beginPath(); g.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); g.clip();
+  const sg = g.createRadialGradient(lx, ly, Math.min(rx, ry) * 0.2, lx, ly, Math.max(rx, ry) * 1.25);
+  sg.addColorStop(0, 'rgba(0,0,0,0)'); sg.addColorStop(1, `rgba(0,0,0,${a})`);
+  g.fillStyle = sg; g.fillRect(cx - rx, cy - ry, rx * 2, ry * 2);
+  g.restore();
+}
+
+function poly(pts) { g.beginPath(); g.moveTo(pts[0][0], pts[0][1]); for (const p of pts.slice(1)) g.lineTo(p[0], p[1]); g.closePath(); }
+
+function hand(side, u, raise) {
+  g.save();
+  g.translate(side * 2.75 * u, (0.2 - raise * 0.9) * u);
+  g.rotate(side * (0.25 - raise * 0.1));
+  // 手のひら
+  g.fillStyle = '#9a96c8';
+  g.beginPath(); g.ellipse(0, 0, 0.62 * u, 0.7 * u, 0, 0, Math.PI * 2); g.fill();
+  // 指（長くて関節がある）
+  for (let i = 0; i < 4; i++) {
+    const a = -Math.PI / 2 + (i - 1.5) * 0.36 * side;
+    let x = Math.cos(a) * 0.5 * u, y = Math.sin(a) * 0.55 * u;
+    for (let k = 0; k < 3; k++) {
+      const len = (0.55 - k * 0.1) * u, bend = a + k * 0.12 * side;
+      const x2 = x + Math.cos(bend) * len, y2 = y + Math.sin(bend) * len;
+      g.strokeStyle = '#9a96c8'; g.lineWidth = (0.24 - k * 0.04) * u; g.lineCap = 'round';
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x2, y2); g.stroke();
+      g.fillStyle = '#4a4670'; g.beginPath(); g.arc(x2, y2, 0.05 * u, 0, Math.PI * 2); g.fill();
+      x = x2; y = y2;
+    }
+    g.fillStyle = '#e8e6ff'; g.beginPath(); g.arc(x, y, 0.09 * u, 0, Math.PI * 2); g.fill(); // 爪
+  }
+  // 親指
+  g.strokeStyle = '#9a96c8'; g.lineWidth = 0.2 * u;
+  g.beginPath(); g.moveTo(-side * 0.4 * u, 0.1 * u); g.lineTo(-side * 0.95 * u, -0.25 * u); g.stroke();
+  g.restore();
+}
+
+function draw(f) {
+  const p = params(f);
+  // 前のフレームを薄く残す（ブレ）
+  prev.getContext('2d').drawImage(c, 0, 0);
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalCompositeOperation = 'source-over';
+  g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+  const haze = g.createRadialGradient(W / 2, H * 0.75, 20, W / 2, H * 0.6, W * 0.6);
+  haze.addColorStop(0, `rgba(40,50,140,${0.35 * p.lit})`); haze.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = haze; g.fillRect(0, 0, W, H);
+
+  const u = 62 * p.s;
+  g.save();
+  g.translate(W / 2 + p.sx, H * 0.5 + p.sy + (1 - p.s / 2) * 30);
+  g.rotate(p.rot);
+
+  // 胴体
+  g.fillStyle = '#0e0c1a';
+  poly([[-2.4 * u, 1.7 * u], [2.4 * u, 1.7 * u], [3.2 * u, 6 * u], [-3.2 * u, 6 * u]]); g.fill();
+  g.fillStyle = '#181428';
+  g.beginPath(); g.ellipse(0, 2.3 * u, 1.3 * u, 0.9 * u, 0, 0, Math.PI * 2); g.fill();
+  // 胸のかぼちゃバッジ
+  g.fillStyle = '#c86418'; g.beginPath(); g.ellipse(0, 2.2 * u, 0.32 * u, 0.26 * u, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#100'; g.fillRect(-0.12 * u, 2.18 * u, 0.24 * u, 0.06 * u);
+
+  // 腕
+  g.strokeStyle = '#2a2546'; g.lineCap = 'round';
+  for (const side of [-1, 1]) {
+    g.lineWidth = 0.55 * u;
+    g.beginPath(); g.moveTo(side * 2.1 * u, 1.9 * u); g.lineTo(side * 2.9 * u, (1.1 - p.hands * 0.4) * u); g.lineTo(side * 2.75 * u, (0.2 - p.hands * 0.9) * u); g.stroke();
+  }
+
+  // 耳（左は破れて配線が出ている）
+  for (const side of [-1, 1]) {
+    g.fillStyle = '#231e38';
+    const tip = side < 0 ? [[-1.25 * u, -3.1 * u], [-1.0 * u, -2.75 * u], [-0.85 * u, -3.2 * u]] : [[1.35 * u, -3.35 * u]];
+    poly([[side * 0.5 * u, -1.6 * u], ...tip, [side * 1.9 * u, -1.0 * u]]); g.fill();
+    g.fillStyle = '#8a4a78';
+    poly([[side * 0.75 * u, -1.55 * u], [side * 1.25 * u, -2.7 * u], [side * 1.6 * u, -1.2 * u]]); g.fill();
+  }
+  g.strokeStyle = '#7a8090'; g.lineWidth = 0.04 * u;
+  for (let i = 0; i < 4; i++) { g.beginPath(); g.moveTo(-1.0 * u, -2.85 * u); g.quadraticCurveTo(-1.3 * u - i * 0.1 * u, -3.4 * u, -1.0 * u - i * 0.15 * u, -3.6 * u + i * 0.1 * u); g.stroke(); }
+
+  // 頭：つやのあるプラスチックの顔パーツ（Sister Location 風の質感。デザインはオリジナルの黒猫）
+  const hg = g.createRadialGradient(-0.6 * u, -1.5 * u, 0.2 * u, 0, -0.5 * u, 2.5 * u);
+  hg.addColorStop(0, '#f6f4ff'); hg.addColorStop(0.5, '#cbc6ea'); hg.addColorStop(1, '#4e4870');
+  g.fillStyle = hg;
+  g.beginPath(); g.ellipse(0, -0.6 * u, 2.05 * u, 1.75 * u, 0, 0, Math.PI * 2); g.fill();
+  shade(0, -0.6 * u, 2.05 * u, 1.75 * u, -0.2 * u, -0.2 * u, 0.6);
+  // 口まわりのパーツ（少し明るい）
+  const mg = g.createRadialGradient(-0.3 * u, -0.3 * u, 0.1 * u, 0, 0, 1.1 * u);
+  mg.addColorStop(0, '#fbfaff'); mg.addColorStop(1, '#a8a2cc');
+  g.fillStyle = mg;
+  g.beginPath(); g.ellipse(0, -0.05 * u, 1.05 * u, 0.62 * u, 0, 0, Math.PI * 2); g.fill();
+  // パーツの継ぎ目（暗い溝）とネジ
+  g.strokeStyle = 'rgba(16,12,36,0.9)'; g.lineWidth = 0.08 * u; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(-1.95 * u, -0.85 * u); g.quadraticCurveTo(-1.1 * u, -1.85 * u, 0, -1.62 * u); g.quadraticCurveTo(1.1 * u, -1.85 * u, 1.95 * u, -0.85 * u); g.stroke();
+  g.beginPath(); g.moveTo(0, -2.33 * u); g.lineTo(0, -1.62 * u); g.stroke();
+  for (const side of [-1, 1]) {
+    g.beginPath(); g.moveTo(side * 1.92 * u, -0.15 * u); g.quadraticCurveTo(side * 1.4 * u, 0.42 * u, side * 0.95 * u, 0.3 * u); g.stroke();
+  }
+  g.beginPath(); g.ellipse(0, -0.05 * u, 1.05 * u, 0.62 * u, 0, Math.PI * 1.05, Math.PI * 1.95); g.stroke();
+  for (const [sx, sy] of [[-1.5, -1.2], [1.5, -1.2], [-1.45, 0.12], [1.45, 0.12], [-0.35, -2.05], [0.35, -2.05]]) {
+    g.fillStyle = '#3a3656'; g.beginPath(); g.arc(sx * u, sy * u, 0.07 * u, 0, Math.PI * 2); g.fill();
+    g.fillStyle = 'rgba(255,255,255,0.7)'; g.beginPath(); g.arc(sx * u - 0.02 * u, sy * u - 0.02 * u, 0.025 * u, 0, Math.PI * 2); g.fill();
+  }
+  // ほおのペイント（くっきり）
+  g.fillStyle = 'rgba(214,60,140,0.6)';
+  for (const side of [-1, 1]) { g.beginPath(); g.ellipse(side * 1.42 * u, -0.25 * u, 0.32 * u, 0.22 * u, side * 0.3, 0, Math.PI * 2); g.fill(); }
+  // ひび割れ
+  g.strokeStyle = '#2a2440'; g.lineWidth = 0.05 * u;
+  g.beginPath(); g.moveTo(0.6 * u, -2.2 * u); g.lineTo(0.75 * u, -1.75 * u); g.lineTo(0.55 * u, -1.45 * u); g.lineTo(0.8 * u, -1.1 * u); g.stroke();
+  // つやのハイライト
+  g.globalCompositeOperation = 'screen';
+  g.fillStyle = 'rgba(255,255,255,0.55)';
+  g.beginPath(); g.ellipse(-0.75 * u, -1.85 * u, 0.55 * u, 0.16 * u, -0.25, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.ellipse(-0.35 * u, -0.35 * u, 0.3 * u, 0.09 * u, -0.2, 0, Math.PI * 2); g.fill();
+  g.globalCompositeOperation = 'source-over';
+
+  // 口の中：奥に金属の骨格（エンドスケルトン）
+  const jawDrop = p.jaw * 1.35 * u;
+  g.fillStyle = '#05030a';
+  g.beginPath(); g.ellipse(0, 0.55 * u + jawDrop * 0.45, 1.25 * u, 0.25 * u + jawDrop * 0.55, 0, 0, Math.PI * 2); g.fill();
+  const eg = g.createLinearGradient(0, 0.5 * u, 0, 0.6 * u + jawDrop);
+  eg.addColorStop(0, '#5a5e6e'); eg.addColorStop(1, '#1a1c24');
+  g.fillStyle = eg;
+  g.fillRect(-0.75 * u, 0.55 * u, 1.5 * u, 0.12 * u + jawDrop * 0.7);
+  g.fillStyle = '#b8bccb';
+  for (let i = -4; i <= 4; i++) poly([[i * 0.17 * u - 0.07 * u, 0.6 * u], [i * 0.17 * u + 0.07 * u, 0.6 * u], [i * 0.17 * u, 0.82 * u]]), g.fill();
+  g.fillStyle = 'rgba(120,0,20,0.5)';
+  g.beginPath(); g.ellipse(0, 0.75 * u + jawDrop * 0.6, 0.5 * u, 0.08 * u + jawDrop * 0.2, 0, 0, Math.PI * 2); g.fill();
+  // 上の歯（外側のパーツ）
+  g.fillStyle = '#e6e9f4';
+  for (let i = -5; i <= 5; i++) poly([[i * 0.22 * u - 0.1 * u, 0.4 * u], [i * 0.22 * u + 0.1 * u, 0.4 * u], [i * 0.22 * u, (0.75 + (i % 2 ? 0.1 : 0)) * u]]), g.fill();
+  // 下あご
+  g.save();
+  g.translate(0, jawDrop);
+  const jg = g.createLinearGradient(0, 0.75 * u, 0, 1.55 * u);
+  jg.addColorStop(0, '#d8d4f0'); jg.addColorStop(1, '#5a5478');
+  g.fillStyle = jg;
+  g.beginPath(); g.ellipse(0, 1.0 * u, 1.35 * u, 0.55 * u, 0, 0, Math.PI); g.fill();
+  g.fillRect(-1.35 * u, 0.75 * u, 2.7 * u, 0.26 * u);
+  g.strokeStyle = 'rgba(16,12,36,0.9)'; g.lineWidth = 0.06 * u;
+  g.beginPath(); g.moveTo(-1.3 * u, 1.02 * u); g.lineTo(1.3 * u, 1.02 * u); g.stroke();
+  g.fillStyle = '#e6e9f4';
+  for (let i = -5; i <= 5; i++) poly([[i * 0.22 * u - 0.1 * u, 0.78 * u], [i * 0.22 * u + 0.1 * u, 0.78 * u], [i * 0.22 * u, (0.45 - (i % 2 ? 0.08 : 0)) * u]]), g.fill();
+  g.restore();
+
+  // 鼻（つやのある丸）
+  const ng = g.createRadialGradient(-0.06 * u, -0.28 * u, 0.02 * u, 0, -0.2 * u, 0.25 * u);
+  ng.addColorStop(0, '#ff9ad0'); ng.addColorStop(1, '#5a1840');
+  g.fillStyle = ng; g.beginPath(); g.ellipse(0, -0.2 * u, 0.24 * u, 0.17 * u, 0, 0, Math.PI * 2); g.fill();
+
+  // 目：機械の目玉（白目・光る瞳・小さな黒目）＋まぶたのパーツ
+  for (const side of [-1, 1]) {
+    const ex = side * 0.78 * u, ey = -0.92 * u;
+    g.fillStyle = '#05030a';
+    g.beginPath(); g.ellipse(ex, ey, 0.6 * u, 0.52 * u, side * 0.2, 0, Math.PI * 2); g.fill();
+    const wg = g.createRadialGradient(ex - 0.1 * u, ey - 0.1 * u, 0.05 * u, ex, ey, 0.48 * u);
+    wg.addColorStop(0, '#ffffff'); wg.addColorStop(1, '#8c8aa8');
+    g.fillStyle = wg;
+    g.beginPath(); g.ellipse(ex, ey + 0.04 * u, 0.44 * u, 0.4 * u, 0, 0, Math.PI * 2); g.fill();
+    if (p.eye > 0) {
+      const ix = ex + side * -0.06 * u, iy = ey + 0.06 * u;
+      const glow = g.createRadialGradient(ix, iy, 0, ix, iy, 0.6 * u);
+      glow.addColorStop(0, `rgba(200,180,255,${0.8 * p.eye})`); glow.addColorStop(1, 'rgba(120,100,255,0)');
+      g.fillStyle = glow; g.fillRect(ix - 0.7 * u, iy - 0.7 * u, 1.4 * u, 1.4 * u);
+      g.fillStyle = `rgba(190,170,255,${p.eye})`;
+      g.beginPath(); g.arc(ix, iy, 0.2 * u, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#000'; g.beginPath(); g.arc(ix, iy, 0.08 * u, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#fff'; g.beginPath(); g.arc(ix - 0.07 * u, iy - 0.07 * u, 0.04 * u, 0, Math.PI * 2); g.fill();
+    }
+    // まぶた（半分閉じた怒り顔のパーツ）
+    const lg = g.createLinearGradient(0, ey - 0.5 * u, 0, ey);
+    lg.addColorStop(0, '#9a94c0'); lg.addColorStop(1, '#4e4870');
+    g.fillStyle = lg;
+    poly([[ex - 0.5 * u, ey - 0.45 * u + side * 0.12 * u], [ex + 0.5 * u, ey - 0.45 * u - side * 0.12 * u], [ex + 0.5 * u, ey - 0.08 * u - side * 0.14 * u], [ex - 0.5 * u, ey - 0.08 * u + side * 0.14 * u]]); g.fill();
+    g.strokeStyle = 'rgba(16,12,36,0.9)'; g.lineWidth = 0.05 * u;
+    g.beginPath(); g.moveTo(ex - 0.5 * u, ey - 0.08 * u + side * 0.14 * u); g.lineTo(ex + 0.5 * u, ey - 0.08 * u - side * 0.14 * u); g.stroke();
+  }
+
+  // 手（いちばん手前）
+  hand(-1, u, p.hands);
+  hand(1, u, p.hands);
+  g.restore();
+  // 飛びかかった瞬間の白いフラッシュ
+  if (f === 10 || f === 11) { g.fillStyle = `rgba(200,210,255,${f === 10 ? 0.55 : 0.25})`; g.fillRect(0, 0, W, H); }
+
+  // 青い照明
+  g.globalCompositeOperation = 'multiply';
+  g.fillStyle = `rgb(${Math.round(110 * p.lit)},${Math.round(130 * p.lit)},${Math.round(255 * Math.min(1, p.lit))})`;
+  g.fillRect(0, 0, W, H);
+  g.globalCompositeOperation = 'screen';
+  const rim = g.createRadialGradient(W / 2, H * 0.2, 10, W / 2, H * 0.3, W * 0.5);
+  rim.addColorStop(0, `rgba(80,110,220,${0.3 * p.lit})`); rim.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = rim; g.fillRect(0, 0, W, H);
+  // ブレ
+  g.globalCompositeOperation = 'lighter';
+  g.globalAlpha = f > 5 ? 0.18 : 0;
+  g.drawImage(prev, 0, 0);
+  g.globalAlpha = 1;
+  g.globalCompositeOperation = 'source-over';
+  // ふちを暗く
+  const vg = g.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, W * 0.62);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.92)');
+  g.fillStyle = vg; g.fillRect(0, 0, W, H);
+  // 後半は画面が横にずれる
+  if (f > 20) {
+    for (let i = 0; i < 4; i++) {
+      const y = rnd(f * 7 + i) * H, h = 10 + rnd(f * 3 + i) * 40, dx = (rnd(f * 5 + i) - 0.5) * 80;
+      g.drawImage(c, 0, y, W, h, dx, y, W, h);
+    }
+  }
+  // ノイズ
+  const img = g.getImageData(0, 0, W, H), d = img.data;
+  for (let i = 0; i < d.length; i += 4) { const n = (Math.random() - 0.5) * 26; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+  g.putImageData(img, 0, 0);
+}
+
+async function play() {
+  for (let f = 0; f < FRAMES; f++) { draw(f); await new Promise((r) => setTimeout(r, 40)); }
+}
+
+async function exportFrames(url) {
+  for (let f = 0; f < FRAMES; f++) {
+    draw(f);
+    const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+    await fetch(`${url}f${String(f).padStart(3, '0')}.png`, { method: 'POST', body: blob });
+  }
+  document.querySelector('p').textContent = 'export done';
+}
+
+const exp = new URLSearchParams(location.search).get('export');
+if (exp) exportFrames(exp); else play();
+c.addEventListener('click', play);
+</script>
+</body>
+</html>
